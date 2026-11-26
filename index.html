@@ -64,6 +64,8 @@ textarea.in{height:auto;padding:11px 14px;resize:vertical;line-height:1.5}
 .login label{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:600;color:var(--muted)}
 .login .btn{height:48px;font-size:15px}
 .demo-tag{font-size:12.5px;color:var(--muted);text-align:center;margin:0}
+.link-s{border:0;background:none;color:var(--blue-2);font-weight:600;font-size:14px;padding:4px;align-self:center;text-decoration:underline;text-underline-offset:3px}
+.link-s:hover{color:var(--blue)}
 
 /* estrutura */
 .app{display:flex;height:100vh;height:100dvh;overflow:hidden}
@@ -373,6 +375,7 @@ function apiSupabase() {
     async entrar(email, senha) { ok(await sb.auth.signInWithPassword({ email, password: senha })); },
     async sair() { await sb.auth.signOut(); },
     async trocarSenha(nova) { ok(await sb.auth.updateUser({ password: nova })); },
+    async recuperar(email) { ok(await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname })); },
     async eu() { const { data: { user } } = await sb.auth.getUser(); if (!user) return null; return ok(await sb.from('equipe').select('*').eq('user_id', user.id).maybeSingle()); },
     async conversas() { return ok(await sb.from('conversas').select('*, contato:contatos(*)').order('ultima_msg_em', { ascending: false, nullsFirst: false }).limit(500)); },
     async conversa(id) { return ok(await sb.from('conversas').select('*, contato:contatos(*)').eq('id', id).maybeSingle()); },
@@ -467,6 +470,7 @@ function apiDemo() {
     async entrar(email, senha) { if (!email || !senha) throw new Error('Informe e-mail e senha.'); window.__demoS = 1; try { sessionStorage.setItem('demo-sessao', '1'); } catch { } },
     async sair() { window.__demoS = 0; try { sessionStorage.removeItem('demo-sessao'); } catch { } },
     async trocarSenha() { },
+    async recuperar(email) { if (!/\S+@\S+/.test(email)) throw new Error('Informe o seu e-mail.'); },
     async eu() { return EU; },
     async conversas() { return db.conversas.filter(visivel).map(comContato).sort((a, b) => (b.ultima_msg_em || '').localeCompare(a.ultima_msg_em || '')); },
     async conversa(id) { const c = db.conversas.find(x => x.id === id); return c && visivel(c) ? comContato(c) : null; },
@@ -484,7 +488,7 @@ function apiDemo() {
     async config() { return { ...db.config }; },
     async salvarConfig(c) { Object.assign(db.config, c); },
     async equipe() { return db.equipe.slice(); },
-    async convidar(nome, email, papel) { db.equipe.push({ user_id: uid(), nome, email, papel, ativo: true }); return { senha: 'Ex3mpl0Senha' }; },
+    async convidar(nome, email, papel) { if (!nome || !/\S+@\S+/.test(email)) throw new Error('Informe nome e e-mail.'); db.equipe.push({ user_id: uid(), nome, email, papel, ativo: true }); return { convite: true }; },
     async mudarPapel(id, papel) { db.equipe.find(e => e.user_id === id).papel = papel; },
     async mudarAtivo(id, ativo) { db.equipe.find(e => e.user_id === id).ativo = ativo; },
     assinar(cb) { ouvintes.push(cb); },
@@ -541,6 +545,7 @@ function telaLogin(erro) {
     <label>E-mail<input class="in" type="email" id="lEmail" autocomplete="username" required ${DEMO ? 'value="bia@provintes.com.br"' : ''}></label>
     <label>Senha<input class="in" type="password" id="lSenha" autocomplete="current-password" required ${DEMO ? 'value="demonstracao"' : ''}></label>
     <button class="btn pri" type="submit">Entrar</button>
+    <button type="button" class="link-s" id="lEsqueci">Esqueci minha senha ou é meu primeiro acesso</button>
     ${DEMO ? '<p class="demo-tag">Modo demonstração: os dados são de exemplo e ficam só neste navegador.</p>' : ''}
   </form></main>`;
   const entrar = async e => {
@@ -549,8 +554,30 @@ function telaLogin(erro) {
     catch (x) { telaLogin(/invalid/i.test(x.message) ? 'E-mail ou senha incorretos.' : x.message); }
   };
   $('#fLogin button').addEventListener('click', entrar);
+  $('#lEsqueci').addEventListener('click', () => telaEsqueci($('#lEmail').value.trim()));
   $('#fLogin').addEventListener('submit', entrar);
   $('#fLogin').addEventListener('keydown', e => { if (e.key === 'Enter') entrar(e); });
+}
+
+function telaEsqueci(email, enviado) {
+  root.innerHTML = `<main class="login"><form id="fEsq" novalidate>
+    <div class="wordmark">${MARK}<span>provintes<i></i></span></div>
+    ${enviado ? `<div><h1 style="font-size:22px">Confira o seu e-mail 📬</h1><p style="margin:8px 0 0;color:var(--muted);font-size:14.5px;line-height:1.5">Se <b>${esc(enviado)}</b> tiver acesso ao painel, chega em instantes um e-mail com o link para criar a sua senha. Olhe também a caixa de spam.</p></div>
+      <button type="button" class="btn pri" id="eVoltar">Voltar para entrar</button>`
+    : `<div><h1 style="font-size:22px">Criar ou trocar a senha</h1><p style="margin:6px 0 0;color:var(--muted);font-size:14px">Digite o seu e-mail e mandamos um link para você criar uma senha nova.</p></div>
+      <label>E-mail<input class="in" type="email" id="eEmail" autocomplete="username" value="${esc(email || '')}"></label>
+      <button class="btn pri" type="submit">Enviar link</button>
+      <button type="button" class="link-s" id="eVoltar">Voltar para entrar</button>`}
+  </form></main>`;
+  $('#eVoltar').addEventListener('click', () => telaLogin());
+  const enviar = async e => {
+    e.preventDefault(); const b = $('#fEsq button[type=submit]'); if (!b || b.disabled) return; const em = $('#eEmail').value.trim();
+    if (!/^\S+@\S+\.\S+$/.test(em)) return toast('Digite um e-mail válido.', true);
+    b.disabled = true; b.textContent = 'Enviando…';
+    try { await API.recuperar(em); telaEsqueci('', em); }
+    catch (x) { b.disabled = false; b.textContent = 'Enviar link'; toast(/rate|limit|seconds/i.test(x.message) ? 'Muitos pedidos seguidos. Espere um minuto e tente de novo.' : esc(x.message), true); }
+  };
+  const f = $('#fEsq'); f.addEventListener('submit', enviar); const sb = $('#fEsq button[type=submit]'); if (sb) sb.addEventListener('click', enviar);
 }
 
 /* =====================================================================
@@ -899,10 +926,10 @@ async function telaEquipe(box) {
       <p><b>Administrador(a)</b> mexe na ANAB, nas respostas prontas e na equipe. <b>Atendente</b> só responde conversas.</p>
       <div class="grid2"><label class="campo">Nome<input class="in" id="eNome"></label><label class="campo">E-mail<input class="in" id="eEmail" type="email"></label></div>
       <label class="campo">Acesso<select class="in" id="ePapel"><option value="atendente">Atendente</option><option value="admin">Administrador(a)</option></select></label>
-      <div><button type="button" class="btn" id="eAdd">Adicionar pessoa</button></div><div id="eRes"></div></section>`;
+      <div><button type="button" class="btn" id="eAdd">Convidar por e-mail</button></div><div id="eRes"></div></section>`;
   $('#eAdd').addEventListener('click', async e => {
     e.target.disabled = true;
-    try { const r = await API.convidar($('#eNome').value.trim(), $('#eEmail').value.trim(), $('#ePapel').value); $('#eRes').innerHTML = `<p style="background:var(--ok-soft);color:var(--ok);padding:12px;border-radius:12px">Pronto! Senha provisória: <b style="font-family:monospace;font-size:16px">${esc(r.senha)}</b>. Mande para a pessoa por um canal seguro e peça para trocar no primeiro acesso.</p>`; }
+    try { const em = $('#eEmail').value.trim(); await API.convidar($('#eNome').value.trim(), em, $('#ePapel').value); $('#eRes').innerHTML = `<p style="background:var(--ok-soft);color:var(--ok);padding:12px;border-radius:12px">Convite enviado para <b>${esc(em)}</b> 📬 A pessoa recebe um e-mail com o link para criar a senha e entrar no painel.</p>`; $('#eNome').value = $('#eEmail').value = ''; S.equipe = await API.equipe(); }
     catch (x) { toast(esc(x.message), true); } e.target.disabled = false;
   });
   box.onchange = async e => { const s = e.target.closest('[data-papel]'); if (!s) return; try { await API.mudarPapel(s.dataset.papel, s.value); toast('Acesso alterado'); } catch (x) { toast(esc(x.message), true); } };
