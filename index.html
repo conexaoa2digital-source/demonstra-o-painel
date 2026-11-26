@@ -510,6 +510,7 @@ function apiDemo() {
   };
   return api;
 }
+const VEIO_DE_CONVITE = (location.hash.match(/type=(invite|recovery|signup|magiclink)/) || [])[1] || null;
 const API = DEMO ? apiDemo() : apiSupabase();
 
 Object.assign(ICON, {
@@ -959,7 +960,9 @@ async function iniciar() {
   const [convs, cfg, resp, eq] = await Promise.all([API.conversas(), API.config().catch(() => null), API.respostas().catch(() => []), API.equipe().catch(() => [])]);
   S.config = cfg; S.respostas = resp; S.equipe = eq;
   S.convs = new Map(convs.map(c => [c.id, c]));
+  if (VEIO_DE_CONVITE) S.view = 'ajustes';
   casca(); render();
+  if (VEIO_DE_CONVITE) { history.replaceState(null, '', location.pathname); setTimeout(() => { toast(VEIO_DE_CONVITE === 'recovery' ? 'Crie a sua nova senha em <b>Minha conta</b>.' : `Bem-vindo(a), ${esc(S.eu.nome)}! Crie a sua senha em <b>Minha conta</b>.`); const s1 = $('#s1'); if (s1) { s1.scrollIntoView({ block: 'center' }); s1.focus(); } }, 600); }
   API.assinar(aoMudar);
   setInterval(() => { if (S.view !== 'conversas' || !S.sel || S.rec) return; const c = S.convs.get(S.sel); if (c && janela(c.ultima_entrada_em) <= 0 && !$('.fechada')) renderComp(); }, 60e3);
 }
